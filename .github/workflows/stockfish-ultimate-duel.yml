@@ -37,9 +37,15 @@ on:
 permissions:
   contents: read
 
+env:
+  PRO_GDRIVE_ID: '19qHQjKmot41xaAZKz0LXqnqhAgtdjjXx'
+  PRO_GDRIVE_URL: 'https://drive.google.com/file/d/19qHQjKmot41xaAZKz0LXqnqhAgtdjjXx/view?usp=drivesdk'
+  UNI_GDRIVE_ID: '1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l'
+  UNI_GDRIVE_URL: 'https://drive.google.com/file/d/1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l/view?usp=drivesdk'
+
 jobs:
   stage1_tournament:
-    name: "Stage 1 — Unpack Logic, Build & Tournament (Up to 3h)"
+    name: "Stage 1 — Unpack Logic, Download GDrive Engines & Tournament (Up to 3h)"
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 220
     outputs:
@@ -86,10 +92,10 @@ jobs:
                   os.chmod(fpath, os.stat(fpath).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
           if not os.path.isfile("scripts/tournament.py") or not os.path.isfile("scripts/build_engines.sh"):
               raise SystemExit("[ERROR] Không tìm thấy scripts/tournament.py hoặc scripts/build_engines.sh! Hãy upload duel-logic.zip ở thư mục gốc của repository.")
-          print("[UNPACK] Đã giải nén thành công bộ logic và áp dụng vào 2 tệp engine ở thư mục gốc.")
+          print("[UNPACK] Đã giải nén thành công bộ logic điều phối giải đấu.")
           PYEOF
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies (python-chess, PyYAML, gdown)
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
@@ -99,7 +105,7 @@ jobs:
         run: |
           python3 scripts/tournament.py --plan-stages --duration "${{ inputs.duration }}"
 
-      - name: Inspect Root Engine Files, Verify Provenance & Build Both Engines
+      - name: Download Engines from Google Drive, Verify Provenance & Build Both Engines
         run: |
           chmod +x scripts/build_engines.sh
           ./scripts/build_engines.sh
@@ -202,7 +208,7 @@ jobs:
                   os.chmod(fpath, os.stat(fpath).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
           PYEOF
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies (python-chess, PyYAML, gdown)
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
