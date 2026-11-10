@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Thời lượng đấu thực tế theo phút (10p -> 300p, không tính thời gian build)'
+        description: 'Thời lượng đấu thực tế theo phút (10p -> 300p, không tính thời gian build PGO)'
         required: true
         default: '60p (60 Minutes - 1h)'
         type: choice
@@ -24,57 +24,63 @@ on:
           - '270p (270 Minutes - 4.5h)'
           - '300p (300 Minutes - 5h)'
       concurrency:
-        description: 'Số bàn cờ chạy song song đồng thời trên CPU đa nhân (Mỗi Engine giữ nguyên 100% sức mạnh & tài nguyên)'
+        description: 'Số bàn cờ chạy song song đồng thời trên CPU đa nhân (Ghim nhân CPU Affinity + 100% tài nguyên/Engine)'
         required: true
-        default: '4 Boards (Parallel 4x - Multi-Core Turbo)'
+        default: 'Auto-Optimal (Tự động tối ưu số bàn & ghim nhân CPU theo Threads)'
         type: choice
         options:
-          - '4 Boards (Parallel 4x - Multi-Core Turbo)'
+          - 'Auto-Optimal (Tự động tối ưu số bàn & ghim nhân CPU theo Threads)'
+          - '4 Boards (Parallel 4x - Max 4 vCPU Throughput)'
           - '3 Boards (Parallel 3x)'
-          - '2 Boards (Parallel 2x)'
-          - '1 Board (Sequential 1x)'
-      move_time:
-        description: 'Thời gian suy nghĩ mỗi nước cấp cho từng Engine (Move Time)'
+          - '2 Boards (Parallel 2x - Best for 2 Threads Leapfrog SMP)'
+          - '1 Board (Sequential 1x - Best for 4 Threads Max SMP)'
+      threads:
+        description: 'Số luồng tìm kiếm UCI Threads cấp riêng cho TỪNG Engine (Khai thác Leapfrog SMP)'
         required: true
-        default: '200 ms'
+        default: '2 Threads per Engine (Leapfrog SMP 2-Core)'
         type: choice
         options:
-          - '100 ms'
-          - '200 ms'
-          - '500 ms'
+          - '1 Thread per Engine (Standard Single-Core)'
+          - '2 Threads per Engine (Leapfrog SMP 2-Core)'
+          - '4 Threads per Engine (Max 4-Core Leapfrog SMP)'
       hash:
-        description: 'Dung lượng bộ nhớ Hash cấp riêng cho từng Engine (Hash Size)'
+        description: 'Dung lượng bộ nhớ Hash cấp riêng cho TỪNG Engine (Hỗ trợ Linux 2MB HugePages trên 16GB RAM)'
         required: true
-        default: '256 MB'
+        default: '512 MB'
         type: choice
         options:
           - '128 MB'
           - '256 MB'
           - '512 MB'
-      threads:
-        description: 'Số luồng tìm kiếm UCI Threads cấp riêng cho từng Engine'
+          - '1024 MB'
+          - '2048 MB'
+      move_time:
+        description: 'Thời gian suy nghĩ mỗi nước cấp cho từng Engine (Move Time)'
         required: true
-        default: '1 Thread per Engine (Standard Fair Duel)'
+        default: '500 ms'
         type: choice
         options:
-          - '1 Thread per Engine (Standard Fair Duel)'
-          - '2 Threads per Engine (Multi-Thread SMP)'
-          - '4 Threads per Engine (Max SMP)'
+          - '100 ms'
+          - '200 ms'
+          - '500 ms'
+          - '1000 ms'
+          - '2000 ms'
 
 permissions:
   contents: read
 
 env:
-  PRO_GDRIVE_ID: '1kzvxgVBl4xjdRztMApj66f3CPaAQbwGX'
-  PRO_GDRIVE_URL: 'https://drive.google.com/file/d/1kzvxgVBl4xjdRztMApj66f3CPaAQbwGX/view?usp=drivesdk'
+  PRO_GDRIVE_ID: '1KMZGR927eodz7f7SbeAF3rQrABQoNo1W'
+  PRO_GDRIVE_URL: 'https://drive.google.com/file/d/1KMZGR927eodz7f7SbeAF3rQrABQoNo1W/view?usp=drivesdk'
   UNI_GDRIVE_ID: '1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l'
   UNI_GDRIVE_URL: 'https://drive.google.com/file/d/1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l/view?usp=drivesdk'
+  USE_PGO: 'true'
 
 jobs:
   stage1_tournament:
-    name: "Stage 1 — Unpack Logic, Download GDrive Engines & Multi-Core Duel (Up to 180p)"
+    name: "Stage 1 — Max Hardware Tuning, PGO Build & Multi-Core Duel (Up to 180p)"
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 220
+    timeout-minutes: 225
     outputs:
       needs_stage2: ${{ steps.plan.outputs.needs_stage2 }}
       duration_minutes: ${{ steps.plan.outputs.duration_minutes }}
@@ -92,6 +98,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Tune Linux Kernel Hardware (2MB HugePages, THP=always, CPU Governor=performance)
+        run: |
+          sudo sh -c 'echo always > /sys/kernel/mm/transparent_hugepage/enabled' 2>/dev/null || true
+          sudo sh -c 'echo madvise > /sys/kernel/mm/transparent_hugepage/defrag' 2>/dev/null || true
+          sudo sysctl -w vm.overcommit_memory=1 >/dev/null 2>&1 || true
+          sudo sysctl -w vm.swappiness=5 >/dev/null 2>&1 || true
+          sudo sysctl -w kernel.sched_autogroup_enabled=0 >/dev/null 2>&1 || true
+          for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            if [ -e "$gov" ]; then
+              echo performance | sudo tee "$gov" >/dev/null 2>&1 || true
+            fi
+          done
+          echo "[HW-KERNEL] Transparent Huge Pages: $(cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || echo N/A)"
+          lscpu || true
+          free -m || true
 
       - name: Unpack Duel Logic Archive from Root (duel-logic.zip)
         run: |
@@ -135,7 +157,7 @@ jobs:
         run: |
           python3 scripts/tournament.py --plan-stages --duration "${{ inputs.duration }}"
 
-      - name: Download Engines from Google Drive, Verify Provenance & Build Both Engines
+      - name: Download Engines from Google Drive, Verify Provenance & PGO Build Both Engines
         run: |
           chmod +x scripts/build_engines.sh
           ./scripts/build_engines.sh
@@ -144,7 +166,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Run Multi-Core Tournament — Stage 1 (${{ steps.plan.outputs.stage1_minutes }}p Play Time)
+      - name: Run Multi-Core Hardware-Pinned Tournament — Stage 1 (${{ steps.plan.outputs.stage1_minutes }}p Play Time)
         run: |
           python3 scripts/tournament.py \
             --stage 1 \
@@ -199,7 +221,7 @@ jobs:
     needs: stage1_tournament
     if: needs.stage1_tournament.outputs.needs_stage2 == 'true'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 220
+    timeout-minutes: 225
 
     steps:
       - name: Checkout Repository
@@ -209,6 +231,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Tune Linux Kernel Hardware (2MB HugePages, THP=always, CPU Governor=performance)
+        run: |
+          sudo sh -c 'echo always > /sys/kernel/mm/transparent_hugepage/enabled' 2>/dev/null || true
+          sudo sh -c 'echo madvise > /sys/kernel/mm/transparent_hugepage/defrag' 2>/dev/null || true
+          sudo sysctl -w vm.overcommit_memory=1 >/dev/null 2>&1 || true
+          sudo sysctl -w vm.swappiness=5 >/dev/null 2>&1 || true
+          sudo sysctl -w kernel.sched_autogroup_enabled=0 >/dev/null 2>&1 || true
 
       - name: Unpack Duel Logic Archive from Root (duel-logic.zip)
         run: |
@@ -256,7 +286,7 @@ jobs:
           chmod +x build/bin/stockfish-pro build/bin/stockfish-universal || true
           SKIP_REBUILD_IF_PRESENT=true ./scripts/build_engines.sh
 
-      - name: Resume Multi-Core Tournament — Stage 2 (Remaining ${{ needs.stage1_tournament.outputs.stage2_minutes }}p Play Time)
+      - name: Resume Multi-Core Hardware-Pinned Tournament — Stage 2 (Remaining ${{ needs.stage1_tournament.outputs.stage2_minutes }}p Play Time)
         run: |
           python3 scripts/tournament.py \
             --stage 2 \
