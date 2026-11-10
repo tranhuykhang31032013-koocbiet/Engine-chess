@@ -4,19 +4,37 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Thời lượng đấu thực tế (Duration: 1 - 6 Hours, không tính thời gian build)'
+        description: 'Thời lượng đấu thực tế theo phút (10p -> 300p, không tính thời gian build)'
         required: true
-        default: '1 Hour'
+        default: '60p (60 Minutes - 1h)'
         type: choice
         options:
-          - '1 Hour'
-          - '2 Hours'
-          - '3 Hours'
-          - '4 Hours'
-          - '5 Hours'
-          - '6 Hours'
+          - '10p (10 Minutes)'
+          - '15p (15 Minutes)'
+          - '20p (20 Minutes)'
+          - '30p (30 Minutes)'
+          - '45p (45 Minutes)'
+          - '60p (60 Minutes - 1h)'
+          - '90p (90 Minutes - 1.5h)'
+          - '120p (120 Minutes - 2h)'
+          - '150p (150 Minutes - 2.5h)'
+          - '180p (180 Minutes - 3h)'
+          - '210p (210 Minutes - 3.5h)'
+          - '240p (240 Minutes - 4h)'
+          - '270p (270 Minutes - 4.5h)'
+          - '300p (300 Minutes - 5h)'
+      concurrency:
+        description: 'Số bàn cờ chạy song song đồng thời trên CPU đa nhân (Mỗi Engine giữ nguyên 100% sức mạnh & tài nguyên)'
+        required: true
+        default: '4 Boards (Parallel 4x - Multi-Core Turbo)'
+        type: choice
+        options:
+          - '4 Boards (Parallel 4x - Multi-Core Turbo)'
+          - '3 Boards (Parallel 3x)'
+          - '2 Boards (Parallel 2x)'
+          - '1 Board (Sequential 1x)'
       move_time:
-        description: 'Thời gian suy nghĩ mỗi nước (Move Time)'
+        description: 'Thời gian suy nghĩ mỗi nước cấp cho từng Engine (Move Time)'
         required: true
         default: '200 ms'
         type: choice
@@ -25,7 +43,7 @@ on:
           - '200 ms'
           - '500 ms'
       hash:
-        description: 'Dung lượng bộ nhớ Hash cho mỗi engine (Hash Size)'
+        description: 'Dung lượng bộ nhớ Hash cấp riêng cho từng Engine (Hash Size)'
         required: true
         default: '256 MB'
         type: choice
@@ -33,23 +51,35 @@ on:
           - '128 MB'
           - '256 MB'
           - '512 MB'
+      threads:
+        description: 'Số luồng tìm kiếm UCI Threads cấp riêng cho từng Engine'
+        required: true
+        default: '1 Thread per Engine (Standard Fair Duel)'
+        type: choice
+        options:
+          - '1 Thread per Engine (Standard Fair Duel)'
+          - '2 Threads per Engine (Multi-Thread SMP)'
+          - '4 Threads per Engine (Max SMP)'
 
 permissions:
   contents: read
 
 env:
-  PRO_GDRIVE_ID: '19qHQjKmot41xaAZKz0LXqnqhAgtdjjXx'
-  PRO_GDRIVE_URL: 'https://drive.google.com/file/d/19qHQjKmot41xaAZKz0LXqnqhAgtdjjXx/view?usp=drivesdk'
+  PRO_GDRIVE_ID: '1kzvxgVBl4xjdRztMApj66f3CPaAQbwGX'
+  PRO_GDRIVE_URL: 'https://drive.google.com/file/d/1kzvxgVBl4xjdRztMApj66f3CPaAQbwGX/view?usp=drivesdk'
   UNI_GDRIVE_ID: '1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l'
   UNI_GDRIVE_URL: 'https://drive.google.com/file/d/1vbj9fK4iCrBFWzGACOMNJFBWBpaHHL7l/view?usp=drivesdk'
 
 jobs:
   stage1_tournament:
-    name: "Stage 1 — Unpack Logic, Download GDrive Engines & Tournament (Up to 3h)"
+    name: "Stage 1 — Unpack Logic, Download GDrive Engines & Multi-Core Duel (Up to 180p)"
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 220
     outputs:
       needs_stage2: ${{ steps.plan.outputs.needs_stage2 }}
+      duration_minutes: ${{ steps.plan.outputs.duration_minutes }}
+      stage1_minutes: ${{ steps.plan.outputs.stage1_minutes }}
+      stage2_minutes: ${{ steps.plan.outputs.stage2_minutes }}
       duration_hours: ${{ steps.plan.outputs.duration_hours }}
       stage1_hours: ${{ steps.plan.outputs.stage1_hours }}
       stage2_hours: ${{ steps.plan.outputs.stage2_hours }}
@@ -100,7 +130,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
 
-      - name: Compute Stage Plan (1-3h Single Stage vs 4-6h Two Stages)
+      - name: Compute Stage Plan (10p-180p Single Stage vs 181p-300p Two Stages)
         id: plan
         run: |
           python3 scripts/tournament.py --plan-stages --duration "${{ inputs.duration }}"
@@ -114,7 +144,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Run Tournament — Stage 1 (${{ steps.plan.outputs.stage1_hours }}h Play Time)
+      - name: Run Multi-Core Tournament — Stage 1 (${{ steps.plan.outputs.stage1_minutes }}p Play Time)
         run: |
           python3 scripts/tournament.py \
             --stage 1 \
@@ -123,9 +153,10 @@ jobs:
             --results-dir results \
             --manifest results/build-manifest.json \
             --duration "${{ inputs.duration }}" \
+            --concurrency "${{ inputs.concurrency }}" \
             --move-time "${{ inputs.move_time }}" \
             --hash "${{ inputs.hash }}" \
-            --threads 1
+            --threads "${{ inputs.threads }}"
 
       - name: Publish Stage 1 Summary to GitHub Step Summary
         if: always()
@@ -145,7 +176,7 @@ jobs:
             results/
             build/bin/
 
-      - name: Upload Final Results Artifact (When 1-3h Selected or Stage 1 Halted)
+      - name: Upload Final Results Artifact (When 10p-180p Selected or Stage 1 Halted)
         if: always() && (steps.plan.outputs.needs_stage2 != 'true' || failure() || cancelled())
         uses: actions/upload-artifact@v4
         with:
@@ -164,7 +195,7 @@ jobs:
             results/experience.bin
 
   stage2_tournament:
-    name: "Stage 2 — Resume & Complete Remaining Tournament (4-6h)"
+    name: "Stage 2 — Resume & Complete Remaining Multi-Core Duel (181p-300p)"
     needs: stage1_tournament
     if: needs.stage1_tournament.outputs.needs_stage2 == 'true'
     runs-on: ubuntu-24.04-arm
@@ -225,7 +256,7 @@ jobs:
           chmod +x build/bin/stockfish-pro build/bin/stockfish-universal || true
           SKIP_REBUILD_IF_PRESENT=true ./scripts/build_engines.sh
 
-      - name: Resume Tournament — Stage 2 (Remaining ${{ needs.stage1_tournament.outputs.stage2_hours }}h Play Time)
+      - name: Resume Multi-Core Tournament — Stage 2 (Remaining ${{ needs.stage1_tournament.outputs.stage2_minutes }}p Play Time)
         run: |
           python3 scripts/tournament.py \
             --stage 2 \
@@ -235,9 +266,10 @@ jobs:
             --results-dir results \
             --manifest results/build-manifest.json \
             --duration "${{ inputs.duration }}" \
+            --concurrency "${{ inputs.concurrency }}" \
             --move-time "${{ inputs.move_time }}" \
             --hash "${{ inputs.hash }}" \
-            --threads 1
+            --threads "${{ inputs.threads }}"
 
       - name: Publish Final Summary to GitHub Step Summary
         if: always()
@@ -252,7 +284,6 @@ jobs:
         with:
           name: Stockfish-Ultimate-Duel-Results
           retention-days: 30
-          overwrite: true
           if-no-files-found: error
           path: |
             results/matches.log
